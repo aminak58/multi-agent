@@ -135,34 +135,65 @@ services:
       context: ./services/orchestrator
       dockerfile: Dockerfile
     container_name: multi-agent-orchestrator
+    ports:
+      - "8001:8001"
+      - "9091:9091"  # Prometheus metrics
     environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-devpassword}@redis:6379/1
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-bot_user}:${RABBITMQ_PASSWORD:-devpassword}@rabbitmq:5672/trading
+      - ENVIRONMENT=development
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-bot_user}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-devpassword}
+      - RABBITMQ_VHOST=/trading
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-devpassword}
+      - REDIS_DB=1
       - MCP_GATEWAY_URL=http://mcp-gateway:8000/api/v1
       - LLM_PROVIDER=${LLM_PROVIDER:-openai}
       - LLM_API_KEY=${LLM_API_KEY}
       - LLM_MODEL=${LLM_MODEL:-gpt-4}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SIGNAL_QUEUE=signal_queue
+      - RISK_QUEUE=risk_queue
+      - POSITION_QUEUE=position_queue
     depends_on:
-      - redis
-      - rabbitmq
-      - mcp-gateway
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      mcp-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     volumes:
       - ./logs/orchestrator:/app/logs
     networks:
       - multi-agent-network
     restart: unless-stopped
 
-  # Celery Workers for Agents
+  # Celery Workers for Agents (Phase 2 - Week 4)
   celery-signal-agent:
     build:
-      context: ./services/agents
-      dockerfile: Dockerfile.signal
+      context: ./services/orchestrator
+      dockerfile: Dockerfile
     container_name: multi-agent-celery-signal
-    command: celery -A agents.signal_agent worker -Q signal_queue -l info --concurrency=2
+    command: celery -A app.celery_app worker -Q signal_queue -l info --concurrency=2 -n signal@%h
     environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-devpassword}@redis:6379/1
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-bot_user}:${RABBITMQ_PASSWORD:-devpassword}@rabbitmq:5672/trading
+      - ENVIRONMENT=development
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-bot_user}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-devpassword}
+      - RABBITMQ_VHOST=/trading
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-devpassword}
+      - REDIS_DB=1
       - MCP_GATEWAY_URL=http://mcp-gateway:8000/api/v1
       - LLM_PROVIDER=${LLM_PROVIDER:-openai}
       - LLM_API_KEY=${LLM_API_KEY}
@@ -176,18 +207,24 @@ services:
     networks:
       - multi-agent-network
     restart: unless-stopped
-    deploy:
-      replicas: 2
 
   celery-risk-agent:
     build:
-      context: ./services/agents
-      dockerfile: Dockerfile.risk
+      context: ./services/orchestrator
+      dockerfile: Dockerfile
     container_name: multi-agent-celery-risk
-    command: celery -A agents.risk_agent worker -Q risk_queue -l info --concurrency=4
+    command: celery -A app.celery_app worker -Q risk_queue -l info --concurrency=4 -n risk@%h
     environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-devpassword}@redis:6379/1
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-bot_user}:${RABBITMQ_PASSWORD:-devpassword}@rabbitmq:5672/trading
+      - ENVIRONMENT=development
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-bot_user}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-devpassword}
+      - RABBITMQ_VHOST=/trading
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-devpassword}
+      - REDIS_DB=1
       - MCP_GATEWAY_URL=http://mcp-gateway:8000/api/v1
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
@@ -202,13 +239,21 @@ services:
 
   celery-position-manager:
     build:
-      context: ./services/agents
-      dockerfile: Dockerfile.position
+      context: ./services/orchestrator
+      dockerfile: Dockerfile
     container_name: multi-agent-celery-position
-    command: celery -A agents.position_manager worker -Q position_queue -l info --concurrency=1
+    command: celery -A app.celery_app worker -Q position_queue -l info --concurrency=1 -n position@%h
     environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-devpassword}@redis:6379/1
-      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-bot_user}:${RABBITMQ_PASSWORD:-devpassword}@rabbitmq:5672/trading
+      - ENVIRONMENT=development
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-bot_user}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-devpassword}
+      - RABBITMQ_VHOST=/trading
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-devpassword}
+      - REDIS_DB=1
       - MCP_GATEWAY_URL=http://mcp-gateway:8000/api/v1
       - HMAC_SECRET=${HMAC_SECRET:-dev-hmac-secret-change-in-production}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -218,6 +263,28 @@ services:
       - mcp-gateway
     volumes:
       - ./logs/position-manager:/app/logs
+    networks:
+      - multi-agent-network
+    restart: unless-stopped
+
+  # Celery Flower - Task Monitoring UI
+  celery-flower:
+    build:
+      context: ./services/orchestrator
+      dockerfile: Dockerfile
+    container_name: multi-agent-flower
+    command: celery -A app.celery_app flower --port=5555
+    ports:
+      - "5555:5555"
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_USER=${RABBITMQ_USER:-bot_user}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-devpassword}
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-devpassword}
+    depends_on:
+      - rabbitmq
+      - redis
     networks:
       - multi-agent-network
     restart: unless-stopped

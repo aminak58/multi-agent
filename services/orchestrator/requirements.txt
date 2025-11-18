@@ -1,0 +1,41 @@
+# FastAPI and server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Celery for async tasks
+celery==5.3.4
+celery[redis]==5.3.4
+
+# Message broker
+amqp==5.2.0
+kombu==5.3.4
+
+# Redis (compatible with celery[redis])
+redis==4.6.0
+hiredis==2.3.2
+
+# HTTP Client
+httpx==0.25.2
+aiohttp==3.9.1
+
+# Monitoring
+prometheus-client==0.19.0
+prometheus-fastapi-instrumentator==6.1.0
+
+# Logging
+python-json-logger==2.0.7
+
+# Utilities
+python-dotenv==1.0.0
+typing-extensions==4.9.0
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+pytest-celery==0.0.0
+
+# Circuit breaker
+pybreaker==1.0.1
