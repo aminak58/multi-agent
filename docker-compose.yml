@@ -1,0 +1,346 @@
+version: '3.8'
+
+#############################################
+# Multi-Agent Trading Bot - MVP Setup
+# با تمام سرویس‌های مورد نیاز برای development/testing
+#############################################
+
+services:
+  #==========================================
+  # Storage & Cache Layer
+  #==========================================
+
+  redis:
+    image: redis:7-alpine
+    container_name: multi-agent-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-devpassword}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - multi-agent-network
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: multi-agent-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-trading_bot}
+      POSTGRES_USER: ${POSTGRES_USER:-bot_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bot_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - multi-agent-network
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    container_name: multi-agent-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - multi-agent-network
+    restart: unless-stopped
+
+  #==========================================
+  # Message Queue
+  #==========================================
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: multi-agent-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-bot_user}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-devpassword}
+      RABBITMQ_DEFAULT_VHOST: /trading
+    ports:
+      - "5672:5672"   # AMQP port
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - multi-agent-network
+    restart: unless-stopped
+
+  #==========================================
+  # Core Services
+  #==========================================
+
+  mcp-gateway:
+    build:
+      context: ./services/mcp-gateway
+      dockerfile: Dockerfile
+    container_name: multi-agent-mcp
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-devpassword}@redis:6379/0
+      - POSTGRES_URL=postgresql://${POSTGRES_USER:-bot_user}:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/${POSTGRES_DB:-trading_bot}
+      - FREQTRADE_API_URL=${FREQTRADE_API_URL:-http://freqtrade:8080}
+      - JWT_SECRET=${JWT_SECRET:-dev-jwt-secret-change-in-production}
+      - HMAC_SECRET=${HMAC_SECRET:-dev-hmac-secret-change-in-production}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - ./logs/mcp:/app/logs
+    networks:
+      - multi-agent-network
+    restart: unless-stopped
+
+  orchestrator:
+    build:
+      context: ./services/orchestrator
+      dockerfile: Dockerfile
+    container_name: multi-agent-orchestrator
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-devpassword}@redis:6379/1
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-bot_user}:${RABBITMQ_PASSWORD:-devpassword}@rabbitmq:5672/trading
+      - MCP_GATEWAY_URL=http://mcp-gateway:8000/api/v1
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      - redis
+      - rabbitmq
+      - mcp-gateway
+    volumes:
+      - ./logs/orchestrator:/app/logs
+    networks:
+      - multi-agent-network
+    restart: unless-stopped
+
+  # Celery Workers for Agents
+  celery-signal-agent:
+    build:
+      context: ./services/agents
+      dockerfile: Dockerfile.signal
+    container_name: multi-agent-celery-signal
+    command: celery -A agents.signal_agent worker -Q signal_queue -l info --concurrency=2
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-devpassword}@redis:6379/1
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-bot_user}:${RABBITMQ_PASSWORD:-devpassword}@rabbitmq:5672/trading
+      - MCP_GATEWAY_URL=http://mcp-gateway:8000/api/v1
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      - rabbitmq
+      - redis
+      - mcp-gateway
+    volumes:
+      - ./logs/signal-agent:/app/logs
+    networks:
+      - multi-agent-network
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+
+  celery-risk-agent:
+    build:
+      context: ./services/agents
+      dockerfile: Dockerfile.risk
+    container_name: multi-agent-celery-risk
+    command: celery -A agents.risk_agent worker -Q risk_queue -l info --concurrency=4
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-devpassword}@redis:6379/1
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-bot_user}:${RABBITMQ_PASSWORD:-devpassword}@rabbitmq:5672/trading
+      - MCP_GATEWAY_URL=http://mcp-gateway:8000/api/v1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      - rabbitmq
+      - redis
+      - mcp-gateway
+    volumes:
+      - ./logs/risk-agent:/app/logs
+    networks:
+      - multi-agent-network
+    restart: unless-stopped
+
+  celery-position-manager:
+    build:
+      context: ./services/agents
+      dockerfile: Dockerfile.position
+    container_name: multi-agent-celery-position
+    command: celery -A agents.position_manager worker -Q position_queue -l info --concurrency=1
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-devpassword}@redis:6379/1
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-bot_user}:${RABBITMQ_PASSWORD:-devpassword}@rabbitmq:5672/trading
+      - MCP_GATEWAY_URL=http://mcp-gateway:8000/api/v1
+      - HMAC_SECRET=${HMAC_SECRET:-dev-hmac-secret-change-in-production}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      - rabbitmq
+      - redis
+      - mcp-gateway
+    volumes:
+      - ./logs/position-manager:/app/logs
+    networks:
+      - multi-agent-network
+    restart: unless-stopped
+
+  #==========================================
+  # Monitoring & Observability
+  #==========================================
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: multi-agent-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - multi-agent-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: multi-agent-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin123}
+      - GF_INSTALL_PLUGINS=redis-datasource
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./config/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+      - postgres
+    networks:
+      - multi-agent-network
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:latest
+    container_name: multi-agent-loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./config/loki.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    networks:
+      - multi-agent-network
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: multi-agent-promtail
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./config/promtail.yml:/etc/promtail/config.yml:ro
+      - ./logs:/var/log:ro
+    depends_on:
+      - loki
+    networks:
+      - multi-agent-network
+    restart: unless-stopped
+
+  #==========================================
+  # Optional: Freqtrade (for local testing)
+  #==========================================
+
+  freqtrade:
+    image: freqtradeorg/freqtrade:stable
+    container_name: multi-agent-freqtrade
+    command: trade --config /freqtrade/user_data/config.json --strategy SampleStrategy
+    environment:
+      - FREQTRADE__API_SERVER__ENABLED=true
+      - FREQTRADE__API_SERVER__LISTEN_IP_ADDRESS=0.0.0.0
+      - FREQTRADE__API_SERVER__LISTEN_PORT=8080
+      - FREQTRADE__API_SERVER__USERNAME=${FREQTRADE_API_USER:-freqtrade}
+      - FREQTRADE__API_SERVER__PASSWORD=${FREQTRADE_API_PASSWORD:-devpassword}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./freqtrade/user_data:/freqtrade/user_data
+      - ./freqtrade/config.json:/freqtrade/user_data/config.json:ro
+    networks:
+      - multi-agent-network
+    restart: unless-stopped
+    profiles:
+      - with-freqtrade
+
+#==========================================
+# Volumes
+#==========================================
+
+volumes:
+  redis_data:
+    driver: local
+  postgres_data:
+    driver: local
+  minio_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  loki_data:
+    driver: local
+
+#==========================================
+# Networks
+#==========================================
+
+networks:
+  multi-agent-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

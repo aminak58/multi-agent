@@ -1,144 +1,266 @@
 openapi: 3.0.3
 info:
-  title: Freqtrade MCP Gateway (minimal)
-  version: '0.1.0'
+  title: MCP Gateway API
+  description: |
+    **MCP (Model Context Protocol) Gateway** برای ربات معاملاتی چندعاملی.
+
+    این API رابط امن بین Agentها و Freqtrade را فراهم می‌کند.
+
+    ## امنیت
+    - تمام درخواست‌ها نیازمند احراز هویت JWT هستند
+    - HMAC signing برای دستورات حساس (POST /orders)
+    - Rate limiting بر اساس role
+
+    ## نرخ محدودیت (Rate Limits)
+    - SignalAgent: 60 req/min
+    - RiskAgent: 120 req/min
+    - PositionManager: 30 req/min
+
+  version: 1.0.0
+  contact:
+    name: Multi-Agent Trading Bot Team
+  license:
+    name: MIT
+
 servers:
-  - url: https://mcp.local
+  - url: http://localhost:8000/api/v1
+    description: محیط توسعه محلی
+  - url: https://mcp-gateway.example.com/api/v1
+    description: محیط Production
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: market-data
+    description: دریافت داده‌های بازار و کندل‌ها
+  - name: positions
+    description: مدیریت پوزیشن‌ها
+  - name: orders
+    description: اجرا و مدیریت سفارشات
+  - name: backtest
+    description: بک‌تست و شبیه‌سازی
+  - name: health
+    description: سلامت سرویس
+
 paths:
+  /health:
+    get:
+      tags:
+        - health
+      summary: بررسی سلامت سرویس
+      description: چک کردن وضعیت MCP Gateway و اتصال به Freqtrade
+      security: []
+      responses:
+        '200':
+          description: سرویس سالم است
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: "healthy"
+                timestamp: 1690000000
+                services:
+                  freqtrade: "connected"
+                  redis: "connected"
+                  postgres: "connected"
+                version: "1.0.0"
+
   /candles:
     get:
-      summary: Get recent candles
+      tags:
+        - market-data
+      summary: دریافت کندل‌ها و فیچرها
+      description: |
+        برگرداندن n کندل آخر برای جفت‌ارز مشخص با فیچرهای محاسبه‌شده
+
+        ### فیچرهای محاسبه‌شده
+        - RSI(14)
+        - ATR(14)
+        - EMA(8, 21, 50)
+        - MACD
+        - Bollinger Bands
+        - Volume Z-Score
+
       parameters:
-        - in: query
-          name: pair
+        - name: pair
+          in: query
+          required: true
+          description: نماد جفت‌ارز (مثل BTC/USDT)
           schema:
             type: string
+            example: "BTC/USDT"
+        - name: tf
+          in: query
           required: true
-        - in: query
-          name: tf
+          description: تایم‌فریم (1m, 5m, 15m, 1h, 4h, 1d)
           schema:
             type: string
-          required: true
-        - in: query
-          name: n
+            enum: [1m, 5m, 15m, 30m, 1h, 4h, 1d]
+            example: "15m"
+        - name: n
+          in: query
+          required: false
+          description: تعداد کندل‌ها (پیش‌فرض 50، حداکثر 1000)
           schema:
             type: integer
-            default: 100
+            minimum: 1
+            maximum: 1000
+            default: 50
+        - name: include_features
+          in: query
+          required: false
+          description: شامل فیچرهای محاسبه‌شده شود
+          schema:
+            type: boolean
+            default: true
       responses:
         '200':
-          description: array of candles with features
-          content:
-            application/json:
+          description: کندل‌ها با موفقیت دریافت شد
+          headers:
+            X-Request-ID:
               schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    t:
-                      type: integer
-                    o:
-                      type: number
-                    h:
-                      type: number
-                    l:
-                      type: number
-                    c:
-                      type: number
-                    v:
-                      type: number
-                    rsi:
-                      type: number
-                    atr:
-                      type: number
-  /positions/open:
-    get:
-      summary: List open positions
-      responses:
-        '200':
-          description: open positions
-          content:
-            application/json:
+                type: string
+                format: uuid
+            X-RateLimit-Limit:
               schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    id:
-                      type: string
-                    pair:
-                      type: string
-                    side:
-                      type: string
-                    size:
-                      type: number
-                    entry_price:
-                      type: number
-  /orders:
-    post:
-      summary: create an order (or request execution)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                request_id:
-                  type: string
-                agent:
-                  type: string
-                pair:
-                  type: string
-                side:
-                  type: string
-                qty:
-                  type: number
-                type:
-                  type: string
-                meta:
-                  type: object
-      responses:
-        '200':
-          description: order submitted
+                type: integer
+            X-RateLimit-Remaining:
+              schema:
+                type: integer
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  ok:
-                    type: boolean
-                  order_id:
+                  pair:
                     type: string
-                  status:
+                  timeframe:
                     type: string
-  /orders/dry-run:
-    post:
-      summary: simulate order for risk checks
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-      responses:
-        '200':
-          description: dry-run result
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  warnings:
+                  count:
+                    type: integer
+                  candles:
                     type: array
                     items:
-                      type: string
-                  margin_required:
-                    type: number
-  /backtest:
-    post:
-      summary: run a backtest job
+                      $ref: '#/components/schemas/Candle'
+              example:
+                pair: "BTC/USDT"
+                timeframe: "15m"
+                count: 3
+                candles:
+                  - t: 1690000000
+                    o: 29500.5
+                    h: 29650.0
+                    l: 29480.0
+                    c: 29600.0
+                    v: 125.5
+                    rsi: 45.2
+                    atr: 150.5
+                    ema_8: 29550.0
+                    ema_21: 29500.0
+                    macd: -12.5
+                    macd_signal: -15.0
+                    bb_upper: 29800.0
+                    bb_lower: 29200.0
+                    volume_zscore: 0.5
+                  - t: 1690000900
+                    o: 29600.0
+                    h: 29700.0
+                    l: 29580.0
+                    c: 29650.0
+                    v: 130.2
+                    rsi: 48.5
+                    atr: 152.0
+                    ema_8: 29580.0
+                    ema_21: 29520.0
+                    macd: -8.0
+                    macd_signal: -12.0
+                    bb_upper: 29820.0
+                    bb_lower: 29220.0
+                    volume_zscore: 0.8
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+  /positions/open:
+    get:
+      tags:
+        - positions
+      summary: لیست پوزیشن‌های باز
+      description: دریافت تمام پوزیشن‌های باز با جزئیات PnL
+      responses:
+        '200':
+          description: لیست پوزیشن‌ها
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  positions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Position'
+              example:
+                count: 2
+                positions:
+                  - id: "550e8400-e29b-41d4-a716-446655440000"
+                    pair: "BTC/USDT"
+                    side: "long"
+                    size: 0.01
+                    entry_price: 29500.0
+                    current_price: 29650.0
+                    unrealized_pnl: 1.5
+                    unrealized_pnl_pct: 0.508
+                    leverage: 1
+                    stop_loss: 29200.0
+                    take_profit: 30000.0
+                    opened_at: 1690000000
+                    meta:
+                      agent: "SignalAgent/v1"
+                      request_id: "req-123"
+                      strategy: "hybrid_llm"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /positions/{position_id}:
+    get:
+      tags:
+        - positions
+      summary: جزئیات یک پوزیشن
+      parameters:
+        - name: position_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: جزئیات پوزیشن
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Position'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags:
+        - positions
+      summary: به‌روزرسانی SL/TP پوزیشن
+      parameters:
+        - name: position_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       requestBody:
         required: true
         content:
@@ -146,15 +268,198 @@ paths:
             schema:
               type: object
               properties:
-                start:
-                  type: string
-                end:
-                  type: string
-                config:
-                  type: object
+                stop_loss:
+                  type: number
+                  format: double
+                take_profit:
+                  type: number
+                  format: double
+                trailing_stop:
+                  type: boolean
+            example:
+              stop_loss: 29300.0
+              take_profit: 30500.0
+              trailing_stop: true
       responses:
         '200':
-          description: backtest job started
+          description: پوزیشن به‌روزرسانی شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Position'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /orders/dry-run:
+    post:
+      tags:
+        - orders
+      summary: شبیه‌سازی سفارش قبل از اجرا
+      description: |
+        بررسی سفارش بدون اجرای واقعی برای:
+        - محاسبه margin مورد نیاز
+        - بررسی risk checks
+        - تشخیص مشکلات احتمالی
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderRequest'
+      responses:
+        '200':
+          description: نتیجه شبیه‌سازی
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DryRunResponse'
+              example:
+                ok: true
+                warnings: []
+                margin_required: 295.0
+                estimated_fee: 2.95
+                risk_checks:
+                  max_position_size: "pass"
+                  max_open_trades: "pass"
+                  daily_loss_limit: "pass"
+                  exposure_limit: "pass"
+                expected_execution_price: 29500.0
+        '400':
+          description: سفارش معتبر نیست
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: "INVALID_ORDER_SIZE"
+                  message: "Order size exceeds maximum allowed"
+                  details:
+                    max_size: 0.1
+                    requested: 0.5
+                  request_id: "req-456"
+
+  /orders:
+    post:
+      tags:
+        - orders
+      summary: ایجاد سفارش جدید
+      description: |
+        اجرای سفارش توسط PositionManager
+
+        **نیازمندی‌های امنیتی:**
+        - Role: position_manager
+        - HMAC signature در header
+        - Dry-run قبلی موفق
+
+      security:
+        - BearerAuth: []
+        - HMACAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderRequest'
+      responses:
+        '201':
+          description: سفارش ایجاد شد
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+              example:
+                ok: true
+                order_id: "ord-789"
+                status: "submitted"
+                submitted_at: 1690000100
+                pair: "BTC/USDT"
+                side: "buy"
+                size: 0.01
+                type: "market"
+                estimated_price: 29500.0
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: عدم دسترسی - role نامعتبر یا HMAC signature اشتباه
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+    get:
+      tags:
+        - orders
+      summary: تاریخچه سفارشات
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, submitted, filled, cancelled, failed]
+        - name: pair
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: لیست سفارشات
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OrderResponse'
+
+  /backtest:
+    post:
+      tags:
+        - backtest
+      summary: راه‌اندازی یک job بک‌تست
+      description: |
+        ایجاد یک job بک‌تست با پارامترهای مشخص
+
+        **نکات:**
+        - از LLM Replay Engine برای بازپخش تصمیمات استفاده می‌شود
+        - نتایج به‌صورت async محاسبه می‌شوند
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BacktestRequest'
+      responses:
+        '202':
+          description: Job ایجاد شد
           content:
             application/json:
               schema:
@@ -162,11 +467,519 @@ paths:
                 properties:
                   job_id:
                     type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [queued, running]
+                  created_at:
+                    type: integer
+                example:
+                  job_id: "bt-550e8400"
+                  status: "queued"
+                  created_at: 1690000200
+
+  /backtest/{job_id}:
+    get:
+      tags:
+        - backtest
+      summary: وضعیت و نتیجه بک‌تست
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: نتایج بک‌تست
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BacktestResult'
+
 components:
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-security:
-  - BearerAuth: []
+      description: |
+        JWT token با claims زیر:
+        - iss: issuer
+        - sub: agent_id
+        - aud: mcp-gateway
+        - exp: expiration
+        - roles: [signal_agent|risk_agent|position_manager]
+
+    HMACAuth:
+      type: apiKey
+      in: header
+      name: X-HMAC-Signature
+      description: |
+        HMAC-SHA256 signature از request body
+
+        ```python
+        import hmac, hashlib
+        signature = hmac.new(
+          secret.encode(),
+          request_body.encode(),
+          hashlib.sha256
+        ).hexdigest()
+        ```
+
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        timestamp:
+          type: integer
+          format: int64
+        services:
+          type: object
+          additionalProperties:
+            type: string
+        version:
+          type: string
+
+    Candle:
+      type: object
+      required:
+        - t
+        - o
+        - h
+        - l
+        - c
+        - v
+      properties:
+        t:
+          type: integer
+          format: int64
+          description: Unix timestamp
+        o:
+          type: number
+          format: double
+          description: Open price
+        h:
+          type: number
+          format: double
+          description: High price
+        l:
+          type: number
+          format: double
+          description: Low price
+        c:
+          type: number
+          format: double
+          description: Close price
+        v:
+          type: number
+          format: double
+          description: Volume
+        rsi:
+          type: number
+          format: double
+          description: RSI(14)
+        atr:
+          type: number
+          format: double
+          description: ATR(14)
+        ema_8:
+          type: number
+          format: double
+        ema_21:
+          type: number
+          format: double
+        ema_50:
+          type: number
+          format: double
+        macd:
+          type: number
+          format: double
+        macd_signal:
+          type: number
+          format: double
+        bb_upper:
+          type: number
+          format: double
+          description: Bollinger Band Upper
+        bb_lower:
+          type: number
+          format: double
+          description: Bollinger Band Lower
+        volume_zscore:
+          type: number
+          format: double
+
+    Position:
+      type: object
+      required:
+        - id
+        - pair
+        - side
+        - size
+        - entry_price
+      properties:
+        id:
+          type: string
+          format: uuid
+        pair:
+          type: string
+        side:
+          type: string
+          enum: [long, short]
+        size:
+          type: number
+          format: double
+        entry_price:
+          type: number
+          format: double
+        current_price:
+          type: number
+          format: double
+        unrealized_pnl:
+          type: number
+          format: double
+        unrealized_pnl_pct:
+          type: number
+          format: double
+        leverage:
+          type: integer
+        stop_loss:
+          type: number
+          format: double
+        take_profit:
+          type: number
+          format: double
+        trailing_stop:
+          type: boolean
+        opened_at:
+          type: integer
+          format: int64
+        meta:
+          type: object
+          additionalProperties: true
+
+    OrderRequest:
+      type: object
+      required:
+        - request_id
+        - agent
+        - pair
+        - side
+        - qty
+        - type
+      properties:
+        request_id:
+          type: string
+          format: uuid
+          description: UUID یکتا برای tracking
+        agent:
+          type: string
+          description: نام و نسخه agent (مثلاً SignalAgent/v1)
+        pair:
+          type: string
+          example: "BTC/USDT"
+        side:
+          type: string
+          enum: [buy, sell]
+        qty:
+          type: number
+          format: double
+          minimum: 0
+          exclusiveMinimum: true
+        type:
+          type: string
+          enum: [market, limit]
+        price:
+          type: number
+          format: double
+          description: قیمت برای limit order
+        stop_loss:
+          type: number
+          format: double
+        take_profit:
+          type: number
+          format: double
+        meta:
+          type: object
+          description: metadata اضافی (reasoning, confidence, etc.)
+          additionalProperties: true
+      example:
+        request_id: "550e8400-e29b-41d4-a716-446655440000"
+        agent: "SignalAgent/v1"
+        pair: "BTC/USDT"
+        side: "buy"
+        qty: 0.01
+        type: "market"
+        stop_loss: 29200.0
+        take_profit: 30000.0
+        meta:
+          confidence: 0.82
+          reasoning: "Bullish MACD crossover with RSI rising"
+          llm_used: true
+
+    OrderResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        order_id:
+          type: string
+        status:
+          type: string
+          enum: [submitted, filled, cancelled, failed]
+        submitted_at:
+          type: integer
+          format: int64
+        filled_at:
+          type: integer
+          format: int64
+        pair:
+          type: string
+        side:
+          type: string
+        size:
+          type: number
+          format: double
+        type:
+          type: string
+        estimated_price:
+          type: number
+          format: double
+        actual_price:
+          type: number
+          format: double
+        fee:
+          type: number
+          format: double
+
+    DryRunResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        warnings:
+          type: array
+          items:
+            type: string
+        margin_required:
+          type: number
+          format: double
+        estimated_fee:
+          type: number
+          format: double
+        risk_checks:
+          type: object
+          additionalProperties:
+            type: string
+        expected_execution_price:
+          type: number
+          format: double
+
+    BacktestRequest:
+      type: object
+      required:
+        - start_date
+        - end_date
+        - pairs
+        - strategy
+      properties:
+        start_date:
+          type: string
+          format: date
+          example: "2024-01-01"
+        end_date:
+          type: string
+          format: date
+          example: "2024-06-30"
+        pairs:
+          type: array
+          items:
+            type: string
+          example: ["BTC/USDT", "ETH/USDT"]
+        timeframe:
+          type: string
+          enum: [1m, 5m, 15m, 1h, 4h, 1d]
+          default: "15m"
+        strategy:
+          type: string
+          description: نام استراتژی
+        initial_capital:
+          type: number
+          format: double
+          default: 10000
+        use_replay_engine:
+          type: boolean
+          default: true
+          description: استفاده از LLM Replay Engine
+        replay_mode:
+          type: string
+          enum: [exact, nearest, surrogate, fallback]
+          default: "exact"
+
+    BacktestResult:
+      type: object
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, running, completed, failed]
+        progress:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+        metrics:
+          type: object
+          properties:
+            total_trades:
+              type: integer
+            win_rate:
+              type: number
+              format: double
+            total_pnl:
+              type: number
+              format: double
+            cagr:
+              type: number
+              format: double
+            sharpe_ratio:
+              type: number
+              format: double
+            sortino_ratio:
+              type: number
+              format: double
+            max_drawdown:
+              type: number
+              format: double
+            max_drawdown_pct:
+              type: number
+              format: double
+            avg_trade_duration:
+              type: number
+              description: میانگین مدت نگهداری (ثانیه)
+            replay_coverage:
+              type: number
+              format: double
+              description: درصد prompts که exact match داشتند
+        started_at:
+          type: integer
+          format: int64
+        completed_at:
+          type: integer
+          format: int64
+        error:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              description: کد خطای یکتا
+              example: "INVALID_ORDER_SIZE"
+            message:
+              type: string
+              description: پیام خطای قابل فهم
+              example: "Order size exceeds maximum allowed"
+            details:
+              type: object
+              description: جزئیات بیشتر خطا
+              additionalProperties: true
+            request_id:
+              type: string
+              format: uuid
+              description: شناسه درخواست برای tracking
+
+  responses:
+    BadRequest:
+      description: درخواست نامعتبر
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: "VALIDATION_ERROR"
+              message: "Invalid request parameters"
+              details:
+                field: "qty"
+                issue: "must be greater than 0"
+              request_id: "req-xyz"
+
+    Unauthorized:
+      description: عدم احراز هویت - JWT نامعتبر یا منقضی شده
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: "UNAUTHORIZED"
+              message: "Invalid or expired JWT token"
+              request_id: "req-abc"
+
+    NotFound:
+      description: منبع یافت نشد
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: "NOT_FOUND"
+              message: "Position not found"
+              details:
+                position_id: "550e8400-e29b-41d4-a716-446655440000"
+              request_id: "req-def"
+
+    RateLimitExceeded:
+      description: محدودیت نرخ درخواست
+      headers:
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+          description: تعداد کل درخواست مجاز
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+          description: تعداد درخواست باقیمانده
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+            format: int64
+          description: زمان ریست محدودیت (Unix timestamp)
+        Retry-After:
+          schema:
+            type: integer
+          description: تعداد ثانیه تا امکان درخواست مجدد
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: "RATE_LIMIT_EXCEEDED"
+              message: "Too many requests, please try again later"
+              details:
+                limit: 60
+                window: "1 minute"
+                retry_after: 45
+              request_id: "req-ghi"
