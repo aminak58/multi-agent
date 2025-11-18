@@ -1,0 +1,81 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # MCP Gateway logs
+  - job_name: mcp-gateway
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: mcp-gateway
+          service: mcp-gateway
+          __path__: /var/log/mcp/*.log
+
+  # Orchestrator logs
+  - job_name: orchestrator
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: orchestrator
+          service: orchestrator
+          __path__: /var/log/orchestrator/*.log
+
+  # Signal Agent logs
+  - job_name: signal-agent
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: signal-agent
+          service: signal-agent
+          component: agent
+          __path__: /var/log/signal-agent/*.log
+
+  # Risk Agent logs
+  - job_name: risk-agent
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: risk-agent
+          service: risk-agent
+          component: agent
+          __path__: /var/log/risk-agent/*.log
+
+  # Position Manager logs
+  - job_name: position-manager
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: position-manager
+          service: position-manager
+          component: agent
+          __path__: /var/log/position-manager/*.log
+
+  # Parse JSON logs
+  - job_name: json-logs
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
+            timestamp: timestamp
+            message: message
+            service: name
+      - labels:
+          level:
+          service:
+      - timestamp:
+          source: timestamp
+          format: RFC3339
+      - output:
+          source: message
