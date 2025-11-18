@@ -1,0 +1,172 @@
+openapi: 3.0.3
+info:
+  title: Freqtrade MCP Gateway (minimal)
+  version: '0.1.0'
+servers:
+  - url: https://mcp.local
+paths:
+  /candles:
+    get:
+      summary: Get recent candles
+      parameters:
+        - in: query
+          name: pair
+          schema:
+            type: string
+          required: true
+        - in: query
+          name: tf
+          schema:
+            type: string
+          required: true
+        - in: query
+          name: n
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: array of candles with features
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    t:
+                      type: integer
+                    o:
+                      type: number
+                    h:
+                      type: number
+                    l:
+                      type: number
+                    c:
+                      type: number
+                    v:
+                      type: number
+                    rsi:
+                      type: number
+                    atr:
+                      type: number
+  /positions/open:
+    get:
+      summary: List open positions
+      responses:
+        '200':
+          description: open positions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    pair:
+                      type: string
+                    side:
+                      type: string
+                    size:
+                      type: number
+                    entry_price:
+                      type: number
+  /orders:
+    post:
+      summary: create an order (or request execution)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                request_id:
+                  type: string
+                agent:
+                  type: string
+                pair:
+                  type: string
+                side:
+                  type: string
+                qty:
+                  type: number
+                type:
+                  type: string
+                meta:
+                  type: object
+      responses:
+        '200':
+          description: order submitted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  order_id:
+                    type: string
+                  status:
+                    type: string
+  /orders/dry-run:
+    post:
+      summary: simulate order for risk checks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: dry-run result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  warnings:
+                    type: array
+                    items:
+                      type: string
+                  margin_required:
+                    type: number
+  /backtest:
+    post:
+      summary: run a backtest job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                start:
+                  type: string
+                end:
+                  type: string
+                config:
+                  type: object
+      responses:
+        '200':
+          description: backtest job started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+security:
+  - BearerAuth: []
