@@ -1,0 +1,44 @@
+# FastAPI and server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Authentication
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+
+# Database
+sqlalchemy==2.0.23
+alembic==1.13.0
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+
+# Redis
+redis==5.0.1
+hiredis==2.3.2
+
+# HTTP Client
+httpx==0.25.2
+aiohttp==3.9.1
+
+# Monitoring
+prometheus-client==0.19.0
+prometheus-fastapi-instrumentator==6.1.0
+
+# Logging
+python-json-logger==2.0.7
+
+# Utilities
+python-dotenv==1.0.0
+typing-extensions==4.9.0
+
+# Rate limiting
+slowapi==0.1.9
+
+# Testing (optional for dev)
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+httpx==0.25.2
