@@ -99,22 +99,23 @@ async def get_current_user(
     return payload
 
 
-async def get_optional_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(security, auto_error=False),
-) -> Optional[dict]:
-    """
-    Optional authentication dependency.
-
-    Args:
-        credentials: HTTP Bearer credentials (optional)
-
-    Returns:
-        User payload or None
-    """
-    if credentials is None:
-        return None
-
-    try:
-        return await get_current_user(credentials)
-    except HTTPException:
-        return None
+# Optional user authentication - commented out due to FastAPI version compatibility
+# async def get_optional_user(
+#     credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
+# ) -> Optional[dict]:
+#     """
+#     Optional authentication dependency.
+#
+#     Args:
+#         credentials: HTTP Bearer credentials (optional)
+#
+#     Returns:
+#         User payload or None
+#     """
+#     if credentials is None:
+#         return None
+#
+#     try:
+#         return await get_current_user(credentials)
+#     except HTTPException:
+#         return None

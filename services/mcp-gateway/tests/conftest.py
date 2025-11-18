@@ -1,8 +1,17 @@
 """Pytest configuration and fixtures."""
 
+import os
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, MagicMock
+
+# Set required environment variables before importing app
+os.environ.setdefault("JWT_SECRET", "test-jwt-secret-for-testing")
+os.environ.setdefault("HMAC_SECRET", "test-hmac-secret-for-testing")
+os.environ.setdefault("REDIS_PASSWORD", "test-redis-password")
+os.environ.setdefault("POSTGRES_PASSWORD", "test-postgres-password")
+os.environ.setdefault("ENVIRONMENT", "test")
+os.environ.setdefault("DEBUG", "true")
 
 from app.main import app
 from app.utils.cache import cache
